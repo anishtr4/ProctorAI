@@ -6,16 +6,34 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOi
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 // Session Management
-export async function createSession(code: string) {
+// Session Management
+export async function createSession(code: string, userId?: string) {
+    const payload: any = { code, status: 'waiting' };
+    if (userId) payload.created_by = userId;
+
     const { data, error } = await supabase
         .from('sessions')
-        .insert({ code, status: 'waiting' })
+        .insert(payload)
         .select()
         .single();
 
     if (error) {
         console.error('Create session error:', error);
         return null;
+    }
+    return data;
+}
+
+export async function getInterviewerSessions(userId: string) {
+    const { data, error } = await supabase
+        .from('sessions')
+        .select('*')
+        .eq('created_by', userId)
+        .order('created_at', { ascending: false });
+
+    if (error) {
+        console.error('Fetch sessions error:', error);
+        return [];
     }
     return data;
 }
@@ -109,31 +127,133 @@ export async function flushEvents() {
 }
 
 export function logProctoringEvent(sessionId: string, eventType: string, details = {}) {
-    // Immediate send for signaling
-    if (eventType === 'PEER_CONNECT') {
-        supabase.from('proctoring_logs').insert({
-            session_id: sessionId,
-            event_type: eventType,
-            details,
-            created_at: new Date().toISOString()
-        }).then(({ error }) => {
-            if (error) console.error('Signal error:', error);
-        });
+    // Immediate broadcast for critical alerts or peer signals
+    if (eventType === 'PEER_CONNECT' || eventType.includes('⚠️') || eventType.includes('👁️')) {
+        sendInstantSignal(sessionId, eventType, details);
         return;
     }
 
     queueProctoringEvent(sessionId, eventType, details);
 }
 
-// Real-time Subscriptions
+// Sync trust score via Broadcast and Persist to DB
+export async function updateTrustScore(sessionId: string, score: number) {
+    sendInstantSignal(sessionId, 'TRUST_SCORE_UPDATE', { score });
+
+    // Persist to session table so dashboard can show it easily
+    const { error } = await supabase
+        .from('sessions')
+        .update({ trust_score: score })
+        .eq('id', sessionId);
+
+    if (error) console.error('Error persisting trust score:', error);
+}
+
+// Real-time Subscriptions (Shared Channels with Multiple Callbacks)
+const activeChannels = new Map<string, any>();
+const channelCallbacks = new Map<string, Set<(log: any) => void>>();
+
 export function subscribeToProctoringLogs(sessionId: string, callback: (log: any) => void) {
-    return supabase
-        .channel(`proctoring:${sessionId}`)
+    // 1. Initialize or get callback set
+    if (!channelCallbacks.has(sessionId)) {
+        channelCallbacks.set(sessionId, new Set());
+    }
+    channelCallbacks.get(sessionId)!.add(callback);
+
+    const unsubscribe = () => {
+        const callbacks = channelCallbacks.get(sessionId);
+        if (callbacks) {
+            callbacks.delete(callback);
+            if (callbacks.size === 0) {
+                const channel = activeChannels.get(sessionId);
+                if (channel) {
+                    supabase.removeChannel(channel);
+                    activeChannels.delete(sessionId);
+                }
+                channelCallbacks.delete(sessionId);
+            }
+        }
+    };
+
+    // 2. Reuse or create channel
+    if (activeChannels.has(sessionId)) {
+        console.log(`[Realtime] Reusing exists channel and adding callback for ${sessionId}`);
+        return { unsubscribe, channel: activeChannels.get(sessionId) };
+    }
+
+    console.log(`[Realtime] Creating new channel for ${sessionId}`);
+    const channel = supabase.channel(`proctoring:${sessionId}`);
+    activeChannels.set(sessionId, channel);
+
+    const handleLog = (log: any) => {
+        const callbacks = channelCallbacks.get(sessionId);
+        if (callbacks) callbacks.forEach(cb => cb(log));
+    };
+
+    channel
+        // Mode 1: Listen for DB Inserts
         .on('postgres_changes', {
             event: 'INSERT',
             schema: 'public',
             table: 'proctoring_logs',
             filter: `session_id=eq.${sessionId}`
-        }, (payload) => callback(payload.new))
-        .subscribe();
+        }, (payload) => handleLog(payload.new))
+        // Mode 2: Listen for Broadcasts
+        .on('broadcast', { event: 'signal' }, (payload) => {
+            console.log('📡 [Broadcast] Received:', payload.payload.event_type);
+            handleLog(payload.payload);
+        })
+        .subscribe((status: string) => {
+            console.log(`[Realtime] Subscription status for ${sessionId}:`, status);
+        });
+
+    return { unsubscribe, channel };
 }
+
+// Helper to send instant signals via Broadcast
+export async function sendInstantSignal(sessionId: string, type: string, details = {}) {
+    const payload = {
+        session_id: sessionId,
+        event_type: type,
+        details,
+        created_at: new Date().toISOString()
+    };
+
+    console.log(`[Signal] Attempting to send ${type} to session ${sessionId}`, details);
+
+    // 1. Log to DB (Persistent)
+    const { error: dbError } = await supabase.from('proctoring_logs').insert(payload);
+    if (dbError) console.error('[Signal] DB Log Error:', dbError);
+
+    // 2. Broadcast to connected clients (Instant)
+    let channel = activeChannels.get(sessionId);
+
+    const broadcastMessage = async (chan: any) => {
+        const resp = await chan.send({
+            type: 'broadcast',
+            event: 'signal',
+            payload: payload
+        });
+        console.log(`[Signal] Broadcast ${type} sent status:`, resp);
+    };
+
+    if (!channel) {
+        console.log(`[Signal] No active channel for ${sessionId}, creating temp one`);
+        channel = supabase.channel(`proctoring:${sessionId}`);
+        channel.subscribe(async (status: string) => {
+            if (status === 'SUBSCRIBED') {
+                await broadcastMessage(channel);
+                // Don't kill it immediately, keep it for a bit in case of rapid signals
+                if (!activeChannels.has(sessionId)) {
+                    setTimeout(() => supabase.removeChannel(channel), 10000);
+                }
+            }
+        });
+    } else {
+        // If channel exists but isn't subscribed yet, it might be in transition.
+        // For simplicity, if it's already in our map, we assume it's being handled.
+        await broadcastMessage(channel);
+    }
+}
+
+

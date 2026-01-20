@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { logProctoringEvent } from '@/lib/supabase';
+import { logProctoringEvent, updateTrustScore } from '@/lib/supabase';
 
 interface ProctoringProps {
     sessionId?: string;
@@ -39,7 +39,12 @@ export default function Proctoring({
     const [isPeerReady, setIsPeerReady] = useState(false); // NEW: Track init state
 
     const scoreRef = useRef(100);
-    const isPeerReadyRef = useRef(false); // Ref to track ready state without re-renders if needed? No, state is fine.
+    const sessionIdRef = useRef(sessionId);
+
+    // Keep ref in sync
+    useEffect(() => {
+        sessionIdRef.current = sessionId;
+    }, [sessionId]);
 
     // ...
 
@@ -252,7 +257,6 @@ export default function Proctoring({
             });
 
             faceMesh.onResults((results: any) => {
-                // ... (Same analysis logic) ...
                 const ctx = canvas.getContext('2d');
                 if (!ctx) return;
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -274,7 +278,12 @@ export default function Proctoring({
                 }
 
                 frameCountRef.current++;
-                if (frameCountRef.current % 30 === 0) recoverScore();
+                if (frameCountRef.current % 30 === 0) {
+                    // Only recover if everything is okay
+                    if (faces === 1 && gazeStatus === 'Center') {
+                        recoverScore();
+                    }
+                }
             });
 
             // Use requestAnimationFrame loop instead of Camera utils to support stream sharing better
@@ -304,54 +313,117 @@ export default function Proctoring({
         const alertData = { message, time: new Date().toLocaleTimeString() };
         setAlerts(prev => [alertData, ...prev].slice(0, 10));
         onAlert?.(message);
-        if (sessionId) logProctoringEvent(sessionId, message, {});
+
+        const sid = sessionIdRef.current;
+        if (sid) {
+            console.log(`[Proctoring] Broadcasting alert: ${message} to ${sid}`);
+            logProctoringEvent(sid, message, {});
+        } else {
+            console.warn('[Proctoring] Cannot broadcast alert: sessionId is missing');
+        }
     };
 
     const penalizeScore = (amount: number) => {
         scoreRef.current = Math.max(0, scoreRef.current - amount);
         setTrustScore(scoreRef.current);
         onTrustScoreChange?.(scoreRef.current);
+        const sid = sessionIdRef.current;
+        if (sid) updateTrustScore(sid, scoreRef.current);
     };
 
     const recoverScore = () => {
+        if (scoreRef.current >= 100) return;
         scoreRef.current = Math.min(100, scoreRef.current + 1);
         setTrustScore(scoreRef.current);
         onTrustScoreChange?.(scoreRef.current);
+        const sid = sessionIdRef.current;
+        if (sid) updateTrustScore(sid, scoreRef.current);
     };
 
     const analyzeGaze = (landmarks: any[], ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => {
-        // ... (Copy existing logic) ...
+        // 1. Iris Gaze (Relative to Eye corners)
         const leftIris = landmarks[468];
         const rightIris = landmarks[473];
-        const leftEyeInner = landmarks[133];
-        const leftEyeOuter = landmarks[33];
-        const rightEyeInner = landmarks[362];
-        const rightEyeOuter = landmarks[263];
-        const leftEyeWidth = Math.abs(leftEyeOuter.x - leftEyeInner.x);
-        const leftIrisOffset = (leftIris.x - leftEyeInner.x) / leftEyeWidth;
-        const rightEyeWidth = Math.abs(rightEyeInner.x - rightEyeOuter.x);
-        const rightIrisOffset = (rightIris.x - rightEyeOuter.x) / rightEyeWidth;
-        const avgOffset = (leftIrisOffset + rightIrisOffset) / 2;
-        const threshold = 0.35;
-        let gaze = 'Center';
-        if (avgOffset < 0.5 - threshold) {
-            gaze = 'Right';
-            throttledAlert('👁️ Looking Right');
-            penalizeScore(1);
-        } else if (avgOffset > 0.5 + threshold) {
-            gaze = 'Left';
-            throttledAlert('👁️ Looking Left');
-            penalizeScore(1);
+        const leftInner = landmarks[133];
+        const leftOuter = landmarks[33];
+        const rightInner = landmarks[362];
+        const rightOuter = landmarks[263];
+        const leftTop = landmarks[159];
+        const leftBot = landmarks[145];
+
+        // Horizontal Iris Offset (0.5 = Center)
+        const leftEyeWidth = Math.abs(leftOuter.x - leftInner.x);
+        const lIrisX = (leftIris.x - Math.min(leftInner.x, leftOuter.x)) / leftEyeWidth;
+        const rIrisX = (rightIris.x - Math.min(rightInner.x, rightOuter.x)) / Math.abs(rightOuter.x - rightInner.x);
+        const avgIrisX = (lIrisX + rIrisX) / 2;
+
+        // Vertical Iris Offset (0.5 = Center)
+        const eyeHeight = Math.abs(leftTop.y - leftBot.y);
+        const irisY = (leftIris.y - Math.min(leftTop.y, leftBot.y)) / eyeHeight;
+
+        // 2. Head Pose estimation (Yaw & Pitch)
+        // Using Nose to Eye ratio for Yaw
+        const noseTip = landmarks[1];
+        const distL = Math.sqrt(Math.pow(noseTip.x - leftInner.x, 2) + Math.pow(noseTip.y - leftInner.y, 2));
+        const distR = Math.sqrt(Math.pow(noseTip.x - rightInner.x, 2) + Math.pow(noseTip.y - rightInner.y, 2));
+        const yawRatio = distL / distR;
+
+        // Using Nose to Mouth/Eyebrow for Pitch
+        const mouthCenter = landmarks[13];
+        const browCenter = landmarks[9];
+        const distNoseMouth = Math.abs(noseTip.y - mouthCenter.y);
+        const distNoseBrow = Math.abs(noseTip.y - browCenter.y);
+        const pitchRatio = distNoseBrow / distNoseMouth;
+
+        let status = 'Center';
+        let alertMsg = '';
+
+        // Yaw Check (Looking Left/Right)
+        if (yawRatio > 2.0) { status = 'Side'; alertMsg = '⚠️ Head Turned (Left)'; }
+        else if (yawRatio < 0.5) { status = 'Side'; alertMsg = '⚠️ Head Turned (Right)'; }
+        // Pitch Check (Looking Up/Down)
+        else if (pitchRatio > 2.5) { status = 'Away'; alertMsg = '⚠️ Looking Down'; }
+        else if (pitchRatio < 0.4) { status = 'Away'; alertMsg = '⚠️ Looking Up'; }
+        // Iris Gaze Check (Subtle eye movements)
+        else if (avgIrisX < 0.15) { status = 'Side'; alertMsg = '👁️ Looking Away (Right)'; }
+        else if (avgIrisX > 0.85) { status = 'Side'; alertMsg = '👁️ Looking Away (Left)'; }
+        else if (irisY < 0.1) { status = 'Away'; alertMsg = '👁️ Looking Up'; }
+        else if (irisY > 0.9) { status = 'Away'; alertMsg = '👁️ Looking Down'; }
+
+        setGazeStatus(status);
+        if (alertMsg) {
+            throttledAlert(alertMsg);
+            penalizeScore(status === 'Side' ? 1 : 2);
         }
-        setGazeStatus(gaze);
-        const drawPoint = (landmark: any, color: string) => {
+
+        // --- Debug Visuals ---
+        const drawPoint = (landmark: any, color: string, radius = 2) => {
             ctx.beginPath();
-            ctx.arc(landmark.x * canvas.width, landmark.y * canvas.height, 4, 0, 2 * Math.PI);
+            ctx.arc(landmark.x * canvas.width, landmark.y * canvas.height, radius, 0, 2 * Math.PI);
             ctx.fillStyle = color;
             ctx.fill();
         };
-        drawPoint(leftIris, gaze === 'Center' ? '#22c55e' : '#ef4444');
-        drawPoint(rightIris, gaze === 'Center' ? '#22c55e' : '#ef4444');
+
+        // Draw Eye boundaries
+        const eyeColor = status === 'Center' ? 'rgba(34, 197, 94, 0.5)' : 'rgba(239, 68, 68, 0.5)';
+        [leftInner, leftOuter, rightInner, rightOuter, leftTop, leftBot].forEach(p => drawPoint(p, eyeColor));
+
+        // Draw Iris (larger)
+        drawPoint(leftIris, status === 'Center' ? '#22c55e' : '#ef4444', 4);
+        drawPoint(rightIris, status === 'Center' ? '#22c55e' : '#ef4444', 4);
+
+        // Draw Head Axis (Nose center)
+        drawPoint(noseTip, '#3b82f6', 5);
+        ctx.beginPath();
+        ctx.strokeStyle = '#3b82f6';
+        ctx.lineWidth = 2;
+        ctx.moveTo(noseTip.x * canvas.width, noseTip.y * canvas.height);
+        // Draw a line indicating "direction"
+        const lineLen = 30;
+        const dx = (0.5 - (1 / (1 + yawRatio))) * 100;
+        const dy = (pitchRatio - 1.2) * 50;
+        ctx.lineTo(noseTip.x * canvas.width + dx, noseTip.y * canvas.height + dy);
+        ctx.stroke();
     };
 
     const scoreColor = trustScore > 80 ? 'text-green-600' : trustScore > 50 ? 'text-amber-600' : 'text-red-600';
@@ -384,42 +456,7 @@ export default function Proctoring({
                 </div>
             </div>
 
-            {/* Stats (only for interviewer view) */}
-            {isInterviewer && (
-                <>
-                    <div className="bg-white rounded-xl border border-slate-200 p-4">
-                        <div className="flex justify-between items-center border-b border-slate-100 pb-3 mb-3">
-                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">Trust Score</span>
-                            <span className={`text-3xl font-extrabold ${scoreColor}`}>{trustScore}</span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                            {/* We don't have face count/gaze status from remote easily without data channel, 
-                   but we can rely on alerts. For now show placeholders or last alert. */}
-                            <div className="bg-slate-50 rounded-lg p-3 text-center">
-                                <div className="text-xs text-slate-500">Last Status</div>
-                                <div className="font-bold">{connectionStatus}</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Alerts */}
-                    <div className="bg-white rounded-xl border border-slate-200 p-4 max-h-64 overflow-y-auto">
-                        <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Alerts</h4>
-                        {alerts.length === 0 ? (
-                            <p className="text-sm text-slate-400 text-center py-4">No alerts yet</p>
-                        ) : (
-                            <div className="space-y-2">
-                                {alerts.map((alert, i) => (
-                                    <div key={i} className="bg-red-50 border-l-4 border-red-500 rounded-r-lg p-3">
-                                        <div className="font-semibold text-red-700 text-sm">{alert.message}</div>
-                                        <div className="text-xs text-slate-500">{alert.time}</div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                </>
-            )}
+            {/* Stats removed - handled by parent Monitor UI */}
         </div>
     );
 }
