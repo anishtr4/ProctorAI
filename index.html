@@ -10,56 +10,151 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap"
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Fira+Code:wght@400;500&display=swap"
     rel="stylesheet">
 </head>
 
 <body>
-  <!-- Landing Page (Interviewer Only) -->
-  <div id="landing-page" class="landing-screen">
-    <div class="landing-container">
-      <div class="landing-header">
-        <svg xmlns="http://www.w3.org/2000/svg" width="56" height="56" viewBox="0 0 24 24" fill="none"
+  <!-- Beautiful Landing Page -->
+  <div id="landing-page" class="landing-page">
+    <!-- Animated Background -->
+    <div class="bg-gradient"></div>
+    <div class="bg-grid"></div>
+
+    <!-- Floating Elements -->
+    <div class="floating-shapes">
+      <div class="shape shape-1"></div>
+      <div class="shape shape-2"></div>
+      <div class="shape shape-3"></div>
+    </div>
+
+    <!-- Header -->
+    <header class="landing-nav">
+      <div class="nav-logo">
+        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none"
           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M2 12a5 5 0 0 0 5 5 8 8 0 0 1 5 2 8 8 0 0 1 5-2 5 5 0 0 0 5-5V7h-5a2 2 0 0 0-2 2v2M5 7H2v5"></path>
         </svg>
-        <h1>ProctorAI</h1>
-        <p>Secure Coding Assessment Platform</p>
+        <span>ProctorAI</span>
       </div>
-      <div class="landing-content">
-        <button id="create-assessment-btn" class="btn btn-primary btn-xl">
-          ➕ Create New Assessment
-        </button>
-        <p class="landing-hint">Generate a unique link to share with your candidate</p>
+      <nav class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#how-it-works">How it Works</a>
+      </nav>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero">
+      <div class="hero-badge">
+        <span class="badge-dot"></span>
+        AI-Powered Proctoring
       </div>
-    </div>
+      <h1 class="hero-title">
+        Secure <span class="gradient-text">Coding Assessments</span><br>
+        Made Simple
+      </h1>
+      <p class="hero-subtitle">
+        Real-time face tracking, gaze detection, and instant cheating alerts.
+        Create assessments in seconds and share with candidates.
+      </p>
+      <button id="create-assessment-btn" class="btn-hero">
+        <span>Create Assessment</span>
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 12h14M12 5l7 7-7 7" />
+        </svg>
+      </button>
+      <p class="hero-hint">Free • No signup required • Links expire in 24 hours</p>
+    </section>
+
+    <!-- Feature Cards -->
+    <section class="features" id="features">
+      <div class="feature-card">
+        <div class="feature-icon">👁️</div>
+        <h3>Gaze Tracking</h3>
+        <p>AI detects when candidates look away from screen</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">👥</div>
+        <h3>Face Detection</h3>
+        <p>Alerts for multiple faces or no face in frame</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">⚡</div>
+        <h3>Real-time Sync</h3>
+        <p>See alerts instantly as they happen</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔗</div>
+        <h3>Unique URLs</h3>
+        <p>Share secure links that expire in 24 hours</p>
+      </div>
+    </section>
+
+    <!-- How it Works -->
+    <section class="how-it-works" id="how-it-works">
+      <h2>How it Works</h2>
+      <div class="steps">
+        <div class="step">
+          <div class="step-number">1</div>
+          <h4>Create Assessment</h4>
+          <p>Click the button to generate a unique session</p>
+        </div>
+        <div class="step-arrow">→</div>
+        <div class="step">
+          <div class="step-number">2</div>
+          <h4>Share Link</h4>
+          <p>Send the URL to your candidate via email or chat</p>
+        </div>
+        <div class="step-arrow">→</div>
+        <div class="step">
+          <div class="step-number">3</div>
+          <h4>Monitor Live</h4>
+          <p>Watch their progress and receive alerts in real-time</p>
+        </div>
+      </div>
+    </section>
   </div>
 
   <!-- Session Created Screen -->
-  <div id="session-created" class="landing-screen hidden">
-    <div class="setup-container">
-      <h2>✅ Assessment Created</h2>
+  <div id="session-created" class="landing-page hidden">
+    <div class="bg-gradient"></div>
+    <div class="setup-modal">
+      <div class="success-icon">✅</div>
+      <h2>Assessment Created!</h2>
       <p>Share this unique link with your candidate:</p>
       <div class="url-display">
         <input type="text" id="session-url" readonly>
-        <button id="copy-url-btn" class="btn btn-primary">📋 Copy</button>
+        <button id="copy-url-btn" class="btn-copy">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" stroke-width="2">
+            <rect x="9" y="9" width="13" height="13" rx="2" />
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+          </svg>
+        </button>
       </div>
-      <div class="expiry-notice">
-        <span>⏰ Link expires in 24 hours</span>
+      <div class="expiry-badge">⏰ Expires in 24 hours</div>
+      <div class="share-buttons">
+        <button id="share-email-btn" class="btn-share">📧 Email</button>
+        <button id="share-teams-btn" class="btn-share">💬 Teams</button>
+        <button id="share-slack-btn" class="btn-share">💬 Slack</button>
       </div>
-      <div class="share-options">
-        <button id="share-email-btn" class="btn btn-secondary">📧 Email</button>
-        <button id="share-teams-btn" class="btn btn-secondary">💬 Teams</button>
-        <button id="share-slack-btn" class="btn btn-secondary">💬 Slack</button>
-      </div>
-      <button id="start-monitoring-btn" class="btn btn-success btn-large">Start Monitoring →</button>
+      <button id="start-monitoring-btn" class="btn-hero btn-start">
+        <span>Start Monitoring</span>
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2">
+          <path d="M5 12h14M12 5l7 7-7 7" />
+        </svg>
+      </button>
     </div>
   </div>
 
   <!-- Session Expired Screen -->
-  <div id="session-expired" class="landing-screen hidden">
-    <div class="setup-container error-container">
-      <h2>⏰ Session Expired</h2>
+  <div id="session-expired" class="landing-page hidden">
+    <div class="bg-gradient"></div>
+    <div class="setup-modal error-modal">
+      <div class="error-icon">⏰</div>
+      <h2>Session Expired</h2>
       <p>This assessment link has expired or is invalid.</p>
       <p class="hint">Please contact your interviewer for a new link.</p>
     </div>
@@ -87,7 +182,6 @@
     </header>
 
     <main class="app-container" id="app-container">
-      <!-- Left Panel: Proctoring (Interviewer only) -->
       <aside class="proctor-panel" id="proctor-panel">
         <div class="video-section-small">
           <video id="webcam" playsinline muted autoplay></video>
@@ -121,7 +215,6 @@
         </div>
       </aside>
 
-      <!-- Candidate Video Mini -->
       <div class="candidate-video-mini hidden" id="candidate-video-mini">
         <video id="webcam-mini" playsinline muted autoplay></video>
         <canvas id="output_canvas_mini"></canvas>
@@ -130,7 +223,6 @@
         </div>
       </div>
 
-      <!-- Center Panel: Editor -->
       <section class="editor-panel">
         <div class="question-header">
           <div class="question-meta">
@@ -139,10 +231,8 @@
           </div>
           <h2 id="question-title">Two Sum</h2>
         </div>
-
         <div class="question-description" id="question-description"></div>
         <div class="editor-container" id="monaco-editor"></div>
-
         <div class="editor-actions">
           <button id="prev-btn" class="btn btn-secondary" disabled>← Previous</button>
           <button id="run-btn" class="btn btn-primary">▶ Run Code</button>
@@ -150,11 +240,9 @@
         </div>
       </section>
 
-      <!-- Right Panel: Questions -->
       <aside class="questions-panel" id="questions-panel">
         <h3>Questions</h3>
         <div id="question-list" class="question-list"></div>
-
         <div id="interviewer-controls" class="interviewer-controls">
           <h4>Set Time</h4>
           <div class="time-control">
@@ -163,7 +251,6 @@
             <button id="set-time-btn" class="btn btn-primary btn-sm">Set</button>
           </div>
         </div>
-
         <button id="finish-btn" class="btn btn-danger">Finish Assessment</button>
       </aside>
     </main>
