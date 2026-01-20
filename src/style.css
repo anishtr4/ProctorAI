@@ -39,6 +39,10 @@ body {
   min-height: 100vh;
   position: relative;
   background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
 }
 
 /* Subtle Background Pattern */
@@ -390,6 +394,99 @@ body {
   margin-top: 1rem;
 }
 
+/* ==================== CONFIG MODAL ==================== */
+.config-modal {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 28px;
+  padding: 2.5rem;
+  max-width: 520px;
+  width: 90%;
+  margin: auto;
+  text-align: center;
+  box-shadow: var(--shadow-lg);
+}
+
+.config-modal h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.5rem;
+  font-weight: 800;
+}
+
+.config-modal>p {
+  color: var(--text-secondary);
+  margin-bottom: 2rem;
+}
+
+.config-section {
+  margin-bottom: 1.75rem;
+  text-align: left;
+}
+
+.config-section label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 0.75rem;
+}
+
+.language-options,
+.question-options,
+.time-options {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.lang-option,
+.q-option,
+.time-option {
+  flex: 1;
+  min-width: 100px;
+  padding: 0.875rem 1rem;
+  background: var(--bg-soft);
+  border: 2px solid var(--border-color);
+  border-radius: 12px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: var(--text-primary);
+}
+
+.lang-option:hover,
+.q-option:hover,
+.time-option:hover {
+  border-color: var(--accent-color);
+  background: var(--accent-light);
+}
+
+.lang-option.active,
+.q-option.active,
+.time-option.active {
+  border-color: var(--accent-color);
+  background: var(--accent-light);
+  color: var(--accent-color);
+}
+
+.q-option {
+  min-width: 60px;
+  flex: none;
+}
+
+.config-actions {
+  display: flex;
+  gap: 1rem;
+  margin-top: 2rem;
+}
+
+.config-actions .btn-hero {
+  flex: 1;
+}
+
 /* ==================== SESSION MODALS ==================== */
 .setup-modal {
   background: var(--card-bg);
@@ -397,11 +494,9 @@ body {
   border-radius: 28px;
   padding: 3rem;
   max-width: 480px;
-  margin: 0 auto;
+  width: 90%;
+  margin: auto;
   text-align: center;
-  position: relative;
-  top: 50%;
-  transform: translateY(-50%);
   box-shadow: var(--shadow-lg);
 }
 

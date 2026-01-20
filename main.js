@@ -3,7 +3,7 @@ import { Camera } from './src/camera.js';
 import { VisionEngine } from './src/vision.js';
 import { Analyzer } from './src/analyzer.js';
 import { CodeEditor } from './src/editor.js';
-import { questions } from './src/questions.js';
+import { questions, getQuestionsByLanguage } from './src/questions.js';
 import {
     createSession,
     joinSession,
@@ -17,6 +17,12 @@ import {
 let currentMode = null;
 let sessionCode = null;
 let sessionData = null;
+let assessmentConfig = {
+    language: 'javascript',
+    questionCount: 5,
+    timePerQuestion: 15
+};
+let filteredQuestions = [];
 
 function generateSessionCode() {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -29,6 +35,7 @@ function generateSessionCode() {
 
 document.addEventListener('DOMContentLoaded', async () => {
     const landingPage = document.getElementById('landing-page');
+    const assessmentConfigScreen = document.getElementById('assessment-config');
     const sessionCreated = document.getElementById('session-created');
     const sessionExpired = document.getElementById('session-expired');
     const mainApp = document.getElementById('main-app');
@@ -38,12 +45,50 @@ document.addEventListener('DOMContentLoaded', async () => {
     const codeFromUrl = urlParams.get('session');
 
     if (codeFromUrl) {
-        // Candidate accessing via unique URL
         await handleCandidateAccess(codeFromUrl);
     }
 
-    // Create Assessment button
-    document.getElementById('create-assessment-btn')?.addEventListener('click', async () => {
+    // Create Assessment -> Show Config
+    document.getElementById('create-assessment-btn')?.addEventListener('click', () => {
+        landingPage.classList.add('hidden');
+        assessmentConfigScreen.classList.remove('hidden');
+    });
+
+    // Config: Language Options
+    document.querySelectorAll('.lang-option').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.lang-option').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            assessmentConfig.language = btn.dataset.lang;
+        });
+    });
+
+    // Config: Question Count
+    document.querySelectorAll('.q-option').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.q-option').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            assessmentConfig.questionCount = parseInt(btn.dataset.count) || questions.length;
+        });
+    });
+
+    // Config: Time Options
+    document.querySelectorAll('.time-option').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.time-option').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            assessmentConfig.timePerQuestion = parseInt(btn.dataset.time);
+        });
+    });
+
+    // Back to Home
+    document.getElementById('back-to-home-btn')?.addEventListener('click', () => {
+        assessmentConfigScreen.classList.add('hidden');
+        landingPage.classList.remove('hidden');
+    });
+
+    // Generate Link
+    document.getElementById('generate-link-btn')?.addEventListener('click', async () => {
         sessionCode = generateSessionCode();
         sessionData = await createSession(sessionCode);
 
@@ -52,10 +97,18 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
+        // Filter questions based on config
+        if (assessmentConfig.language === 'all') {
+            filteredQuestions = [...questions];
+        } else {
+            filteredQuestions = getQuestionsByLanguage(assessmentConfig.language);
+        }
+        filteredQuestions = filteredQuestions.slice(0, assessmentConfig.questionCount);
+
         const sessionUrl = `${window.location.origin}?session=${sessionCode}`;
         document.getElementById('session-url').value = sessionUrl;
 
-        landingPage.classList.add('hidden');
+        assessmentConfigScreen.classList.add('hidden');
         sessionCreated.classList.remove('hidden');
     });
 
@@ -71,19 +124,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('share-email-btn')?.addEventListener('click', () => {
         const url = document.getElementById('session-url').value;
         const subject = encodeURIComponent('Your ProctorAI Coding Assessment');
-        const body = encodeURIComponent(`You have been invited to a coding assessment.\n\nClick the link below to start:\n${url}\n\n⏰ This link expires in 24 hours.`);
+        const body = encodeURIComponent(`You have been invited to a coding assessment.\n\nClick to start:\n${url}\n\n⏰ Expires in 24 hours.`);
         window.open(`mailto:?subject=${subject}&body=${body}`);
     });
 
     document.getElementById('share-teams-btn')?.addEventListener('click', () => {
         const url = document.getElementById('session-url').value;
-        const text = encodeURIComponent(`ProctorAI Coding Assessment\n\n${url}\n\n⏰ Expires in 24 hours`);
+        const text = encodeURIComponent(`ProctorAI Assessment\n${url}\n⏰ Expires in 24 hours`);
         window.open(`https://teams.microsoft.com/share?msgText=${text}`);
     });
 
     document.getElementById('share-slack-btn')?.addEventListener('click', () => {
         const url = document.getElementById('session-url').value;
-        navigator.clipboard.writeText(`ProctorAI Coding Assessment\n${url}\n⏰ Expires in 24 hours`);
+        navigator.clipboard.writeText(`ProctorAI Assessment\n${url}\n⏰ Expires in 24 hours`);
         alert('Message copied! Paste in Slack.');
     });
 
@@ -96,7 +149,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Exit
     document.getElementById('exit-mode-btn')?.addEventListener('click', () => {
         if (confirm('Exit session?')) {
-            flushEvents(); // Send pending events
+            flushEvents();
             location.href = '/';
         }
     });
@@ -110,7 +163,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
-        // Check expiry (24 hours)
         if (sessionData.expires_at) {
             const expiryDate = new Date(sessionData.expires_at);
             if (new Date() > expiryDate) {
@@ -121,6 +173,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         sessionCode = code;
+        filteredQuestions = questions; // Candidate gets all questions for now
         landingPage.classList.add('hidden');
         startApp('candidate');
     }
@@ -134,7 +187,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         const proctorPanel = document.getElementById('proctor-panel');
         const candidateMiniVideo = document.getElementById('candidate-video-mini');
         const interviewerControls = document.getElementById('interviewer-controls');
-        const questionsPanel = document.getElementById('questions-panel');
 
         if (mode === 'candidate') {
             modeBadge.textContent = 'Candidate';
@@ -143,7 +195,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             proctorPanel.classList.add('hidden');
             candidateMiniVideo.classList.remove('hidden');
             interviewerControls.classList.add('hidden');
-            questionsPanel.querySelector('h3').textContent = 'Progress';
         } else {
             modeBadge.textContent = 'Interviewer';
             if (sessionData) {
@@ -197,7 +248,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         let answers = {};
         let timerInterval = null;
         let timeRemaining = 0;
-        let questionTimeLimit = sessionData?.time_limit_minutes || 15;
+        let questionTimeLimit = assessmentConfig.timePerQuestion;
+
+        // Use filtered questions
+        const activeQuestions = filteredQuestions.length > 0 ? filteredQuestions : questions;
 
         if (sessionData) {
             const savedAnswers = await getAnswers(sessionData.id);
@@ -207,7 +261,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const editor = new CodeEditor('monaco-editor');
 
         function renderQuestionList() {
-            questionUI.list.innerHTML = questions.map((q, i) => `
+            questionUI.list.innerHTML = activeQuestions.map((q, i) => `
         <div class="question-item ${i === currentQuestionIndex ? 'active' : ''} ${answers[q.id] ? 'completed' : ''}" data-index="${i}">
           <div class="q-title">${i + 1}. ${q.title}</div>
           <div class="q-meta">${q.language} • ${q.difficulty}</div>
@@ -222,14 +276,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         async function loadQuestion(index) {
             if (editor.editor && sessionData) {
                 const code = editor.getCode();
-                answers[questions[currentQuestionIndex].id] = code;
-                saveAnswer(sessionData.id, questions[currentQuestionIndex].id, code);
+                answers[activeQuestions[currentQuestionIndex].id] = code;
+                saveAnswer(sessionData.id, activeQuestions[currentQuestionIndex].id, code);
             }
 
             currentQuestionIndex = index;
-            const q = questions[index];
+            const q = activeQuestions[index];
 
-            questionUI.progress.textContent = `Question ${index + 1} of ${questions.length}`;
+            questionUI.progress.textContent = `Question ${index + 1} of ${activeQuestions.length}`;
             questionUI.title.textContent = q.title;
             questionUI.language.textContent = q.language.charAt(0).toUpperCase() + q.language.slice(1);
             questionUI.difficulty.textContent = q.difficulty;
@@ -276,11 +330,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         async function handleSubmit() {
             if (sessionData) {
-                await saveAnswer(sessionData.id, questions[currentQuestionIndex].id, editor.getCode());
+                await saveAnswer(sessionData.id, activeQuestions[currentQuestionIndex].id, editor.getCode());
             }
-            answers[questions[currentQuestionIndex].id] = editor.getCode();
+            answers[activeQuestions[currentQuestionIndex].id] = editor.getCode();
 
-            if (currentQuestionIndex < questions.length - 1) {
+            if (currentQuestionIndex < activeQuestions.length - 1) {
                 loadQuestion(currentQuestionIndex + 1);
             } else {
                 flushEvents();
@@ -295,7 +349,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         questionUI.runBtn?.addEventListener('click', () => alert('Code executed. Check console.'));
         questionUI.finishBtn?.addEventListener('click', async () => {
             if (confirm('Finish assessment?')) {
-                if (sessionData) await saveAnswer(sessionData.id, questions[currentQuestionIndex].id, editor.getCode());
+                if (sessionData) await saveAnswer(sessionData.id, activeQuestions[currentQuestionIndex].id, editor.getCode());
                 flushEvents();
                 alert('Submitted!');
             }
