@@ -1,12 +1,12 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://ftwghcaukzpxdsoyhnnm.supabase.co';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ0d2doY2F1a3pweGRzb3lobm5tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg5MjY3MzAsImV4cCI6MjA4NDUwMjczMH0.QgvaMOOn6RNOGOndSxNpuG0slCDl5SnOucxLgRdblTE';
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://ftwghcaukzpxdsoyhnnm.supabase.co';
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ0d2doY2F1a3pweGRzb3lobm5tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg5MjY3MzAsImV4cCI6MjA4NDUwMjczMH0.QgvaMOOn6RNOGOndSxNpuG0slCDl5SnOucxLgRdblTE';
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 // Session Management
-export async function createSession(code) {
+export async function createSession(code: string) {
     const { data, error } = await supabase
         .from('sessions')
         .insert({ code, status: 'waiting' })
@@ -20,7 +20,7 @@ export async function createSession(code) {
     return data;
 }
 
-export async function joinSession(code) {
+export async function joinSession(code: string) {
     const { data, error } = await supabase
         .from('sessions')
         .select()
@@ -32,7 +32,6 @@ export async function joinSession(code) {
         return null;
     }
 
-    // Update status to active
     if (data) {
         await supabase
             .from('sessions')
@@ -43,7 +42,7 @@ export async function joinSession(code) {
     return data;
 }
 
-export async function updateSessionTimeLimit(sessionId, minutes) {
+export async function updateSessionTimeLimit(sessionId: string, minutes: number) {
     const { error } = await supabase
         .from('sessions')
         .update({ time_limit_minutes: minutes })
@@ -53,7 +52,7 @@ export async function updateSessionTimeLimit(sessionId, minutes) {
 }
 
 // Answer Management
-export async function saveAnswer(sessionId, questionId, code) {
+export async function saveAnswer(sessionId: string, questionId: number, code: string) {
     const { data, error } = await supabase
         .from('answers')
         .upsert({
@@ -67,7 +66,7 @@ export async function saveAnswer(sessionId, questionId, code) {
     return data;
 }
 
-export async function getAnswers(sessionId) {
+export async function getAnswers(sessionId: string) {
     const { data, error } = await supabase
         .from('answers')
         .select()
@@ -77,12 +76,12 @@ export async function getAnswers(sessionId) {
     return data || [];
 }
 
-// Proctoring Logs - BATCHED for network optimization
-let eventBatch = [];
-let batchTimer = null;
-const BATCH_INTERVAL = 5000; // Flush every 5 seconds
+// Proctoring Logs - Batched
+let eventBatch: any[] = [];
+let batchTimer: NodeJS.Timeout | null = null;
+const BATCH_INTERVAL = 5000;
 
-export function queueProctoringEvent(sessionId, eventType, details = {}) {
+export function queueProctoringEvent(sessionId: string, eventType: string, details = {}) {
     eventBatch.push({
         session_id: sessionId,
         event_type: eventType,
@@ -109,31 +108,25 @@ export async function flushEvents() {
     if (error) console.error('Batch log error:', error);
 }
 
-// Alias for backwards compatibility
-export function logProctoringEvent(sessionId, eventType, details = {}) {
+export function logProctoringEvent(sessionId: string, eventType: string, details = {}) {
+    // Immediate send for signaling
+    if (eventType === 'PEER_CONNECT') {
+        supabase.from('proctoring_logs').insert({
+            session_id: sessionId,
+            event_type: eventType,
+            details,
+            created_at: new Date().toISOString()
+        }).then(({ error }) => {
+            if (error) console.error('Signal error:', error);
+        });
+        return;
+    }
+
     queueProctoringEvent(sessionId, eventType, details);
 }
 
 // Real-time Subscriptions
-export function subscribeToSession(sessionId, callback) {
-    return supabase
-        .channel(`session:${sessionId}`)
-        .on('postgres_changes', {
-            event: '*',
-            schema: 'public',
-            table: 'answers',
-            filter: `session_id=eq.${sessionId}`
-        }, callback)
-        .on('postgres_changes', {
-            event: '*',
-            schema: 'public',
-            table: 'proctoring_logs',
-            filter: `session_id=eq.${sessionId}`
-        }, callback)
-        .subscribe();
-}
-
-export function subscribeToProctoringLogs(sessionId, callback) {
+export function subscribeToProctoringLogs(sessionId: string, callback: (log: any) => void) {
     return supabase
         .channel(`proctoring:${sessionId}`)
         .on('postgres_changes', {
