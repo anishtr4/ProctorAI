@@ -44,6 +44,7 @@ export default function Proctoring({
     const videoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const [isReady, setIsReady] = useState(false);
+    const [scriptsLoaded, setScriptsLoaded] = useState(false);
     const [trustScore, setTrustScore] = useState(100);
     const [gazeStatus, setGazeStatus] = useState('Center');
     const [connectionStatus, setConnectionStatus] = useState('Disconnected');
@@ -56,6 +57,43 @@ export default function Proctoring({
     const peerRef = useRef<PeerInstance | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
     const connectionRef = useRef<{ close: () => void; on: (event: string, cb: (...args: unknown[]) => void) => void } | null>(null);
+
+    // 1. Unified Script Loading
+    useEffect(() => {
+        const scripts = [
+            { id: 'peerjs-script', src: 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js' },
+            { id: 'mediapipe-face-mesh', src: 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js' },
+            { id: 'mediapipe-camera-utils', src: 'https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js' }
+        ];
+
+        let loadedCount = 0;
+        const total = scripts.length;
+
+        const checkScripts = () => {
+            if (window.Peer && window.FaceMesh && window.Camera) {
+                setScriptsLoaded(true);
+            }
+        };
+
+        scripts.forEach(s => {
+            if (document.getElementById(s.id)) {
+                loadedCount++;
+                if (loadedCount === total) checkScripts();
+                return;
+            }
+            const script = document.createElement('script');
+            script.id = s.id;
+            script.src = s.src;
+            script.async = true;
+            script.onload = () => {
+                loadedCount++;
+                if (loadedCount === total) checkScripts();
+            };
+            document.head.appendChild(script);
+        });
+
+        checkScripts();
+    }, []);
 
     // Keep ref in sync
     useEffect(() => {
@@ -162,17 +200,21 @@ export default function Proctoring({
     }, [throttledAlert, penalizeScore]);
 
     const initializeMediaPipe = useCallback(async () => {
-        if (!videoRef.current || !canvasRef.current || !window.FaceMesh || !window.Camera) return;
+        if (!videoRef.current || !canvasRef.current || !scriptsLoaded) return;
 
         const video = videoRef.current;
         const canvas = canvasRef.current;
+        const FaceMesh = window.FaceMesh;
+        const Camera = window.Camera;
+
+        if (!FaceMesh || !Camera) return;
 
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
             streamRef.current = stream;
             video.srcObject = stream;
 
-            const faceMesh = new window.FaceMesh({
+            const faceMesh = new FaceMesh({
                 locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`,
             });
 
@@ -210,61 +252,48 @@ export default function Proctoring({
                 }
             });
 
-            const processFrame = async () => {
-                if (video.readyState >= 2) {
+            const camera = new Camera(video, {
+                onFrame: async () => {
                     await faceMesh.send({ image: video });
-                }
-                requestAnimationFrame(processFrame);
-            };
+                },
+                width: 640,
+                height: 480
+            });
+            await camera.start();
 
             video.onloadedmetadata = () => {
-                video.play().catch(e => console.error("Video play failed:", e));
-                processFrame();
                 setIsReady(true);
             };
         } catch (err) {
             console.error('Camera error:', err);
         }
-    }, [analyzeGaze, throttledAlert, penalizeScore, recoverScore, gazeStatus]);
+    }, [analyzeGaze, throttledAlert, penalizeScore, recoverScore, gazeStatus, scriptsLoaded]);
 
     useEffect(() => {
-        if (!sessionId) return;
+        if (!sessionId || !scriptsLoaded) return;
         if (peerRef.current) return;
 
-        const initPeer = async () => {
-            if (!window.Peer) {
-                await new Promise<void>((resolve, reject) => {
-                    const script = document.createElement('script');
-                    script.src = 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';
-                    script.async = true;
-                    script.onload = () => resolve();
-                    script.onerror = (e) => reject(e);
-                    document.head.appendChild(script);
-                });
+        const Peer = window.Peer;
+        if (!Peer) return;
+
+        const peer = new Peer();
+        peerRef.current = peer;
+
+        peer.on('open', (id: string) => {
+            console.log('My Peer ID:', id);
+            setIsPeerReady(true);
+        });
+
+        peer.on('call', (call: { answer: (stream: MediaStream) => void; on: (event: string, cb: (data: unknown) => void) => void }) => {
+            if (!isInterviewer && streamRef.current) {
+                call.answer(streamRef.current);
+                setConnectionStatus('Connected to Interviewer');
             }
-
-            const Peer = window.Peer;
-            const peer = new Peer();
-            peerRef.current = peer;
-
-            peer.on('open', (id: string) => {
-                console.log('My Peer ID:', id);
-                setIsPeerReady(true);
-            });
-
-            peer.on('call', (call: { answer: (stream: MediaStream) => void; on: (event: string, cb: (data: unknown) => void) => void }) => {
-                if (!isInterviewer && streamRef.current) {
-                    call.answer(streamRef.current);
-                    setConnectionStatus('Connected to Interviewer');
-                }
-            });
-        };
-
-        initPeer().catch(err => console.error('PeerJS failed to load:', err));
-    }, [sessionId, isInterviewer]);
+        });
+    }, [sessionId, isInterviewer, scriptsLoaded]);
 
     useEffect(() => {
-        if (isInterviewer) return;
+        if (isInterviewer || !scriptsLoaded) return;
         initializeMediaPipe();
 
         return () => {
@@ -275,7 +304,7 @@ export default function Proctoring({
                 peerRef.current.destroy();
             }
         };
-    }, [isInterviewer, initializeMediaPipe]);
+    }, [isInterviewer, initializeMediaPipe, scriptsLoaded]);
 
     useEffect(() => {
         if (isInterviewer || !sessionId || !isReady || !peerRef.current || !peerRef.current.id) return;
