@@ -47,6 +47,7 @@ export default function Proctoring({
     const [scriptsLoaded, setScriptsLoaded] = useState(false);
     const [trustScore, setTrustScore] = useState(100);
     const [gazeStatus, setGazeStatus] = useState('Center');
+    const gazeStatusRef = useRef('Center');
     const [connectionStatus, setConnectionStatus] = useState('Disconnected');
     const [isPeerReady, setIsPeerReady] = useState(false);
 
@@ -95,10 +96,14 @@ export default function Proctoring({
         checkScripts();
     }, []);
 
-    // Keep ref in sync
+    // Keep refs in sync
     useEffect(() => {
         sessionIdRef.current = sessionId;
     }, [sessionId]);
+
+    useEffect(() => {
+        gazeStatusRef.current = gazeStatus;
+    }, [gazeStatus]);
 
     const throttledAlert = useCallback((message: string) => {
         const now = Date.now();
@@ -205,9 +210,8 @@ export default function Proctoring({
         const video = videoRef.current;
         const canvas = canvasRef.current;
         const FaceMesh = window.FaceMesh;
-        const Camera = window.Camera;
 
-        if (!FaceMesh || !Camera) return;
+        if (!FaceMesh) return;
 
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
@@ -235,39 +239,37 @@ export default function Proctoring({
                 if (faces === 0) {
                     throttledAlert('⚠️ No face detected');
                     penalizeScore(2);
-                    setGazeStatus('None');
                 } else if (faces > 1) {
                     throttledAlert('⚠️ Multiple faces detected');
                     penalizeScore(5);
-                    setGazeStatus('Multiple');
                 } else if (results.multiFaceLandmarks?.[0]) {
                     analyzeGaze(results.multiFaceLandmarks[0], ctx, canvas);
                 }
 
                 frameCountRef.current++;
                 if (frameCountRef.current % 30 === 0) {
-                    if (faces === 1 && gazeStatus === 'Center') {
+                    if (faces === 1 && gazeStatusRef.current === 'Center') {
                         recoverScore();
                     }
                 }
             });
 
-            const camera = new Camera(video, {
-                onFrame: async () => {
+            const processFrame = async () => {
+                if (video.readyState >= 2) {
                     await faceMesh.send({ image: video });
-                },
-                width: 640,
-                height: 480
-            });
-            await camera.start();
+                }
+                requestAnimationFrame(processFrame);
+            };
 
             video.onloadedmetadata = () => {
+                video.play().catch(e => console.error("Play error:", e));
+                processFrame();
                 setIsReady(true);
             };
         } catch (err) {
             console.error('Camera error:', err);
         }
-    }, [analyzeGaze, throttledAlert, penalizeScore, recoverScore, gazeStatus, scriptsLoaded]);
+    }, [analyzeGaze, throttledAlert, penalizeScore, recoverScore, scriptsLoaded]);
 
     useEffect(() => {
         if (!sessionId || !scriptsLoaded) return;
@@ -344,7 +346,7 @@ export default function Proctoring({
     }, [remotePeerId, isInterviewer, isPeerReady]);
 
     return (
-        <div className="relative bg-slate-800 rounded-2xl overflow-hidden aspect-video">
+        <div className="relative bg-slate-800 rounded-2xl overflow-hidden aspect-video min-h-[180px]">
             <video ref={videoRef} className="w-full h-full object-cover scale-x-[-1]" playsInline muted autoPlay />
             {!isInterviewer && <canvas ref={canvasRef} className="absolute inset-0 w-full h-full scale-x-[-1]" width={640} height={480} />}
             <div className="absolute top-3 right-3 flex items-center gap-2 px-3 py-1.5 bg-white/90 rounded-full text-xs font-semibold">

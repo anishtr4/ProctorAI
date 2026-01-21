@@ -223,7 +223,7 @@ function MonitorContent() {
                 <Group orientation="horizontal">
 
                     {/* LEFT PANEL: Sidebar */}
-                    <Panel defaultSize={380} minSize={280} maxSize={600} className="flex flex-col bg-slate-50/50 border-r border-slate-100">
+                    <Panel defaultSize={25} minSize={20} maxSize={40} className="flex flex-col bg-slate-50/50 border-r border-slate-100">
                         <Group orientation="vertical">
                             {/* TOP: Video Section */}
                             <Panel defaultSize={45} minSize={35} className="flex flex-col">
@@ -235,8 +235,8 @@ function MonitorContent() {
                                         {!isExpired && <span className="flex h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse ring-4 ring-emerald-500/10"></span>}
                                     </div>
 
-                                    <div className="flex-1 bg-white rounded-[2rem] border border-slate-100 overflow-hidden shadow-sm flex flex-col ring-1 ring-slate-900/[0.02] p-1.5">
-                                        <div className="bg-[#020617] relative aspect-video shrink-0 flex items-center justify-center overflow-hidden rounded-[1.5rem]">
+                                    <div className="flex-1 bg-white rounded-[2rem] border border-slate-100 overflow-hidden shadow-sm flex flex-col ring-1 ring-slate-900/[0.02] p-1.5 min-h-[200px]">
+                                        <div className="bg-[#020617] relative aspect-video shrink-0 flex items-center justify-center overflow-hidden rounded-[1.5rem] min-h-[160px]">
                                             <div className="w-full h-full relative overflow-hidden bg-black">
                                                 {isExpired ? (
                                                     <div className="h-full flex flex-col items-center justify-center text-slate-500 italic">
