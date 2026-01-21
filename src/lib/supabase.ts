@@ -6,9 +6,8 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOi
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 // Session Management
-// Session Management
 export async function createSession(code: string, userId?: string) {
-    const payload: any = { code, status: 'waiting' };
+    const payload: { code: string; status: string; created_by?: string } = { code, status: 'waiting' };
     if (userId) payload.created_by = userId;
 
     const { data, error } = await supabase
@@ -95,11 +94,16 @@ export async function getAnswers(sessionId: string) {
 }
 
 // Proctoring Logs - Batched
-let eventBatch: any[] = [];
+let eventBatch: {
+    session_id: string;
+    event_type: string;
+    details: Record<string, unknown>;
+    created_at: string;
+}[] = [];
 let batchTimer: NodeJS.Timeout | null = null;
 const BATCH_INTERVAL = 5000;
 
-export function queueProctoringEvent(sessionId: string, eventType: string, details = {}) {
+export function queueProctoringEvent(sessionId: string, eventType: string, details: Record<string, unknown> = {}) {
     eventBatch.push({
         session_id: sessionId,
         event_type: eventType,
@@ -126,7 +130,7 @@ export async function flushEvents() {
     if (error) console.error('Batch log error:', error);
 }
 
-export function logProctoringEvent(sessionId: string, eventType: string, details = {}) {
+export function logProctoringEvent(sessionId: string, eventType: string, details: Record<string, unknown> = {}) {
     // Immediate broadcast for critical alerts or peer signals
     if (eventType === 'PEER_CONNECT' || eventType.includes('⚠️') || eventType.includes('👁️')) {
         sendInstantSignal(sessionId, eventType, details);
@@ -150,10 +154,10 @@ export async function updateTrustScore(sessionId: string, score: number) {
 }
 
 // Real-time Subscriptions (Shared Channels with Multiple Callbacks)
-const activeChannels = new Map<string, any>();
-const channelCallbacks = new Map<string, Set<(log: any) => void>>();
+const activeChannels = new Map<string, unknown>();
+const channelCallbacks = new Map<string, Set<(log: { event_type: string; details: Record<string, unknown>;[key: string]: unknown }) => void>>();
 
-export function subscribeToProctoringLogs(sessionId: string, callback: (log: any) => void) {
+export function subscribeToProctoringLogs(sessionId: string, callback: (log: { event_type: string; details: Record<string, unknown>;[key: string]: unknown }) => void) {
     // 1. Initialize or get callback set
     if (!channelCallbacks.has(sessionId)) {
         channelCallbacks.set(sessionId, new Set());
@@ -167,7 +171,8 @@ export function subscribeToProctoringLogs(sessionId: string, callback: (log: any
             if (callbacks.size === 0) {
                 const channel = activeChannels.get(sessionId);
                 if (channel) {
-                    supabase.removeChannel(channel);
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    supabase.removeChannel(channel as any);
                     activeChannels.delete(sessionId);
                 }
                 channelCallbacks.delete(sessionId);
@@ -177,7 +182,7 @@ export function subscribeToProctoringLogs(sessionId: string, callback: (log: any
 
     // 2. Reuse or create channel
     if (activeChannels.has(sessionId)) {
-        console.log(`[Realtime] Reusing exists channel and adding callback for ${sessionId}`);
+        console.log(`[Realtime] Reusing existing channel and adding callback for ${sessionId}`);
         return { unsubscribe, channel: activeChannels.get(sessionId) };
     }
 
@@ -185,7 +190,7 @@ export function subscribeToProctoringLogs(sessionId: string, callback: (log: any
     const channel = supabase.channel(`proctoring:${sessionId}`);
     activeChannels.set(sessionId, channel);
 
-    const handleLog = (log: any) => {
+    const handleLog = (log: { event_type: string; details: Record<string, unknown>;[key: string]: unknown }) => {
         const callbacks = channelCallbacks.get(sessionId);
         if (callbacks) callbacks.forEach(cb => cb(log));
     };
@@ -197,7 +202,7 @@ export function subscribeToProctoringLogs(sessionId: string, callback: (log: any
             schema: 'public',
             table: 'proctoring_logs',
             filter: `session_id=eq.${sessionId}`
-        }, (payload) => handleLog(payload.new))
+        }, (payload) => handleLog(payload.new as { event_type: string; details: Record<string, unknown>;[key: string]: unknown }))
         // Mode 2: Listen for Broadcasts
         .on('broadcast', { event: 'signal' }, (payload) => {
             console.log('📡 [Broadcast] Received:', payload.payload.event_type);
@@ -211,7 +216,7 @@ export function subscribeToProctoringLogs(sessionId: string, callback: (log: any
 }
 
 // Helper to send instant signals via Broadcast
-export async function sendInstantSignal(sessionId: string, type: string, details = {}) {
+export async function sendInstantSignal(sessionId: string, type: string, details: Record<string, unknown> = {}) {
     const payload = {
         session_id: sessionId,
         event_type: type,
@@ -226,9 +231,9 @@ export async function sendInstantSignal(sessionId: string, type: string, details
     if (dbError) console.error('[Signal] DB Log Error:', dbError);
 
     // 2. Broadcast to connected clients (Instant)
-    let channel = activeChannels.get(sessionId);
+    const channel = activeChannels.get(sessionId);
 
-    const broadcastMessage = async (chan: any) => {
+    const broadcastMessage = async (chan: { send: (arg: unknown) => Promise<unknown> }) => {
         const resp = await chan.send({
             type: 'broadcast',
             event: 'signal',
@@ -239,21 +244,21 @@ export async function sendInstantSignal(sessionId: string, type: string, details
 
     if (!channel) {
         console.log(`[Signal] No active channel for ${sessionId}, creating temp one`);
-        channel = supabase.channel(`proctoring:${sessionId}`);
-        channel.subscribe(async (status: string) => {
+        const tempChannel = supabase.channel(`proctoring:${sessionId}`);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (tempChannel as any).subscribe(async (status: string) => {
             if (status === 'SUBSCRIBED') {
-                await broadcastMessage(channel);
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                await broadcastMessage(tempChannel as any);
                 // Don't kill it immediately, keep it for a bit in case of rapid signals
                 if (!activeChannels.has(sessionId)) {
-                    setTimeout(() => supabase.removeChannel(channel), 10000);
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    setTimeout(() => supabase.removeChannel(tempChannel as any), 10000);
                 }
             }
         });
     } else {
-        // If channel exists but isn't subscribed yet, it might be in transition.
-        // For simplicity, if it's already in our map, we assume it's being handled.
-        await broadcastMessage(channel);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await broadcastMessage(channel as any);
     }
 }
-
-

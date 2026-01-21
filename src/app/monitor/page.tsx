@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useEffect, useState, Suspense, useRef } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { Panel, Group, Separator } from 'react-resizable-panels';
@@ -16,8 +16,8 @@ function MonitorContent() {
     const sessionCode = searchParams.get('session');
     const router = useRouter();
 
-    const [sessionData, setSessionData] = useState<any>(null);
-    const [alerts, setAlerts] = useState<any[]>([]);
+    const [sessionData, setSessionData] = useState<{ id: string; created_at: string } | null>(null);
+    const [alerts, setAlerts] = useState<{ event_type: string; created_at: string; details?: Record<string, unknown> }[]>([]);
     const [trustScore, setTrustScore] = useState(100);
     const [remotePeerId, setRemotePeerId] = useState<string | null>(null);
 
@@ -26,13 +26,16 @@ function MonitorContent() {
     const [hintMessage, setHintMessage] = useState('');
     const [showBriefing, setShowBriefing] = useState(true);
     const [showEndSummary, setShowEndSummary] = useState(false);
+    const [isExpired, setIsExpired] = useState<boolean | null>(null);
+    const [isLoading, setIsLoading] = useState(true);
 
     // Code View
-    const [candidateAnswers, setCandidateAnswers] = useState<any[]>([]);
+    const [candidateAnswers, setCandidateAnswers] = useState<{ question_id: number; code: string }[]>([]);
     const [activeQuestionId, setActiveQuestionId] = useState<number | null>(null);
 
     // Initial Load & Auth
     useEffect(() => {
+        let cleanup: (() => void) | undefined;
         async function loadSession() {
             if (!sessionCode) return;
 
@@ -48,6 +51,10 @@ function MonitorContent() {
             if (session) {
                 setSessionData(session);
 
+                // Expiry Check
+                const isSesExpired = session.created_at && (new Date().getTime() - new Date(session.created_at).getTime() > 24 * 60 * 60 * 1000);
+                setIsExpired(!!isSesExpired);
+
                 // 1. Fetch Existing Peer
                 const { data: existingLogs } = await supabase
                     .from('proctoring_logs')
@@ -62,27 +69,27 @@ function MonitorContent() {
                 }
 
                 // 2. Realtime Sub
-                const { unsubscribe } = subscribeToProctoringLogs(session.id, (log) => {
+                const sub = subscribeToProctoringLogs(session.id, (log: { event_type: string; details: Record<string, unknown>;[key: string]: unknown }) => {
                     console.log('📡 [Monitor] Received Signal:', log.event_type, log.details);
                     if (log.event_type === 'PEER_CONNECT') {
-                        setRemotePeerId(log.details?.peerId);
+                        setRemotePeerId(log.details?.peerId as string);
                     } else if (log.event_type === 'TRUST_SCORE_UPDATE') {
-                        setTrustScore(log.details?.score);
+                        setTrustScore(log.details?.score as number);
                     } else if (!log.event_type.startsWith('HINT')) {
-                        // Don't show our own hints as alerts from remote
-                        setAlerts((prev) => [log, ...prev].slice(0, 50));
+                        // Cast to any for the state push to simplify since the interface matches
+                        setAlerts((prev) => [{ event_type: log.event_type, created_at: (log.created_at as string) || new Date().toISOString(), details: log.details }, ...prev].slice(0, 50));
                     }
                 });
 
-                return () => {
-                    console.log(`[Realtime] Unsubscribing monitor from ${session.id}`);
-                    unsubscribe();
-                };
+                cleanup = () => sub.unsubscribe();
+                setIsLoading(false);
             }
         }
 
-        // 3. Robust Polling
-        const checkPeer = async () => {
+        loadSession();
+
+        // 3. Robust Polling for peer
+        const pollInterval = setInterval(async () => {
             if (!sessionCode) return;
             const { data } = await supabase
                 .from('proctoring_logs')
@@ -94,13 +101,11 @@ function MonitorContent() {
             if (data?.[0]?.details?.peerId) {
                 setRemotePeerId(prev => (prev !== data[0].details.peerId ? data[0].details.peerId : prev));
             }
-        };
-        const pollInterval = setInterval(checkPeer, 3000);
+        }, 5000);
 
-        const cleanup = loadSession();
         return () => {
             clearInterval(pollInterval);
-            cleanup.then(c => c && c());
+            if (cleanup) cleanup();
         };
     }, [sessionCode, router]);
 
@@ -111,7 +116,7 @@ function MonitorContent() {
             const { data } = await supabase
                 .from('answers')
                 .select('*')
-                .eq('session_id', sessionData.id)
+                .eq('session_id', sessionData?.id)
                 .order('question_id', { ascending: true });
 
             if (data) {
@@ -126,7 +131,7 @@ function MonitorContent() {
 
 
     // --- Actions ---
-    const sendAdminAction = async (type: 'WARNING' | 'TERMINATE' | 'REFRESH' | 'HINT', details: any = {}) => {
+    const sendAdminAction = async (type: 'WARNING' | 'TERMINATE' | 'REFRESH' | 'HINT', details: Record<string, unknown> = {}) => {
         if (!sessionData?.id) return;
         setSendingAction(true);
 
@@ -149,13 +154,14 @@ function MonitorContent() {
     };
 
     const goToReport = () => {
-        if (!sessionData?.id) return;
+        if (!sessionCode) return;
         router.push(`/report?session=${sessionCode}`);
     };
 
     const activeCode = candidateAnswers.find(a => a.question_id === activeQuestionId)?.code || '// No code written yet';
-    // Expired if > 24 hours
-    const isExpired = sessionData?.created_at && (new Date().getTime() - new Date(sessionData.created_at).getTime() > 24 * 60 * 60 * 1000);
+
+
+    if (isLoading) return <div className="h-screen flex items-center justify-center bg-white text-slate-500 font-bold uppercase tracking-widest text-xs">Initializing Secure Monitor...</div>;
 
 
     return (
@@ -199,7 +205,7 @@ function MonitorContent() {
                     <div className="h-8 w-px bg-slate-100"></div>
                     <button className="px-5 py-2.5 bg-rose-600 text-white rounded-xl font-bold text-[10px] uppercase tracking-widest hover:bg-rose-700 transition shadow-lg shadow-rose-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
                         onClick={() => { if (confirm("Terminate Session?")) { sendAdminAction('TERMINATE'); setShowEndSummary(true); } }}
-                        disabled={isExpired}
+                        disabled={!!isExpired}
                     >
                         End Session
                     </button>
@@ -214,18 +220,13 @@ function MonitorContent() {
 
             {/* Resizable Content Area */}
             <div className="flex-1 overflow-hidden relative">
-                {/* HORIZONTAL: Sidebar | Code */}
-                {/* Using pixel values (numbers) for Sidebar to prevent text shrinking behavior */}
                 <Group orientation="horizontal">
 
-                    {/* LEFT PANEL: Controls & Video */}
-                    {/* defaultSize=380 (pixels), minSize=280 (pixels) */}
                     {/* LEFT PANEL: Sidebar */}
                     <Panel defaultSize={380} minSize={280} maxSize={600} className="flex flex-col bg-slate-50/50 border-r border-slate-100">
-
                         <Group orientation="vertical">
                             {/* TOP: Video Section */}
-                            <Panel defaultSize="45" minSize="35" className="flex flex-col">
+                            <Panel defaultSize={45} minSize={35} className="flex flex-col">
                                 <div className="h-full flex flex-col p-3 pb-0">
                                     <div className="flex items-center justify-between pb-2 px-2">
                                         <h3 className="font-black text-slate-400 text-[9px] uppercase tracking-[0.2em] flex items-center gap-2">
@@ -234,10 +235,7 @@ function MonitorContent() {
                                         {!isExpired && <span className="flex h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse ring-4 ring-emerald-500/10"></span>}
                                     </div>
 
-                                    {/* Video Card - Tightened for zero dead space */}
                                     <div className="flex-1 bg-white rounded-[2rem] border border-slate-100 overflow-hidden shadow-sm flex flex-col ring-1 ring-slate-900/[0.02] p-1.5">
-
-                                        {/* Video Area - Added thick black border/frame */}
                                         <div className="bg-[#020617] relative aspect-video shrink-0 flex items-center justify-center overflow-hidden rounded-[1.5rem]">
                                             <div className="w-full h-full relative overflow-hidden bg-black">
                                                 {isExpired ? (
@@ -252,7 +250,6 @@ function MonitorContent() {
                                                             isInterviewer={true}
                                                             remotePeerId={remotePeerId}
                                                         />
-                                                        {/* Overlay Badge */}
                                                         <div className="absolute top-3 left-3 z-10 bg-black/40 backdrop-blur-md text-white text-[9px] font-black px-2.5 py-1 rounded-full border border-white/10 flex items-center gap-2">
                                                             <span className="w-1.5 h-1.5 bg-rose-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(244,63,94,0.8)]"></span>
                                                             LIVE
@@ -262,18 +259,17 @@ function MonitorContent() {
                                             </div>
                                         </div>
 
-                                        {/* Quick Actions - More compact */}
                                         <div className="p-2 grid grid-cols-2 gap-2 mt-auto">
                                             <button
                                                 onClick={() => sendAdminAction('WARNING', { message: 'Focus!' })}
-                                                disabled={sendingAction || isExpired}
+                                                disabled={sendingAction || !!isExpired}
                                                 className="flex items-center justify-center gap-2 py-2.5 bg-white text-amber-600 border border-amber-100 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-amber-50 transition shadow-sm disabled:opacity-50"
                                             >
                                                 Warn
                                             </button>
                                             <button
                                                 onClick={() => sendAdminAction('REFRESH')}
-                                                disabled={sendingAction || isExpired}
+                                                disabled={sendingAction || !!isExpired}
                                                 className="flex items-center justify-center gap-2 py-2.5 bg-white text-indigo-600 border border-indigo-100 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-indigo-50 transition shadow-sm disabled:opacity-50"
                                             >
                                                 Sync
@@ -283,13 +279,12 @@ function MonitorContent() {
                                 </div>
                             </Panel>
 
-                            {/* Separator - Integrated */}
                             <Separator className="h-4 bg-transparent cursor-row-resize flex items-center justify-center -my-2 z-10 hover:scale-110 transition">
                                 <div className="w-10 h-1 bg-slate-200 rounded-full hover:bg-indigo-400 transition-colors"></div>
                             </Separator>
 
                             {/* BOTTOM: Logs Section */}
-                            <Panel minSize="30" className="flex flex-col">
+                            <Panel minSize={30} className="flex flex-col">
                                 <div className="h-full flex flex-col p-3 pt-0 overflow-hidden">
                                     <div className="flex items-center justify-between pb-2 px-2">
                                         <h3 className="font-black text-slate-400 text-[9px] uppercase tracking-[0.2em] flex items-center gap-2">
@@ -320,7 +315,7 @@ function MonitorContent() {
                                                                         {alert.event_type}
                                                                     </span>
                                                                     <span className="text-[9px] font-mono text-slate-400 font-bold">
-                                                                        {new Date(alert.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                                                        {new Date(alert.created_at || '').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                                                                     </span>
                                                                 </div>
                                                             </div>
@@ -357,7 +352,6 @@ function MonitorContent() {
                                         Q{ans.question_id}
                                     </button>
                                 ))}
-                                {candidateAnswers.length === 0 && <span className="px-2 text-xs text-slate-500 italic">...</span>}
                             </div>
                             <span className="text-[10px] font-mono text-slate-500">READ-ONLY</span>
                         </div>
@@ -382,7 +376,6 @@ function MonitorContent() {
                             />
                         </div>
 
-                        {/* Floating Hint Input - Overlaid on Code Editor Bottom */}
                         {!isExpired && (
                             <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-full max-w-xl px-4 z-20">
                                 <div className="bg-white p-2 rounded-2xl shadow-2xl border border-slate-200 flex items-center gap-3 ring-1 ring-slate-900/5">
@@ -406,11 +399,10 @@ function MonitorContent() {
                             </div>
                         )}
                     </Panel>
-
                 </Group>
             </div>
 
-            {/* UPGRADE: Proctoring Briefing Modal */}
+            {/* Briefing Modal */}
             {showBriefing && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-md p-6 overflow-y-auto">
                     <div className="bg-white rounded-[3rem] p-10 max-w-lg w-full shadow-2xl border border-slate-200 animate-in fade-in zoom-in duration-300">
@@ -452,7 +444,7 @@ function MonitorContent() {
                 </div>
             )}
 
-            {/* UPGRADE: Integrity Report Modal (Post-Session) */}
+            {/* End Summary Modal */}
             {showEndSummary && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center bg-white/80 backdrop-blur-xl p-6 overflow-y-auto">
                     <div className="bg-white rounded-[3rem] p-12 max-w-xl w-full shadow-2xl border border-slate-100 animate-in fade-in slide-in-from-bottom-12 duration-500">
@@ -475,40 +467,6 @@ function MonitorContent() {
                                 <div className={`text-base font-black ${trustScore > 80 ? 'text-emerald-600' : trustScore > 50 ? 'text-amber-600' : 'text-rose-600'}`}>
                                     {trustScore > 80 ? 'LOW RISK' : trustScore > 50 ? 'MODERATE' : 'HIGH RISK'}
                                 </div>
-                            </div>
-                        </div>
-
-                        <div className="space-y-4 mb-12">
-                            <h4 className="text-[9px] font-black text-slate-400 uppercase tracking-widest px-1">Observed Signals</h4>
-                            <div className="grid gap-3">
-                                {alerts.length === 0 ? (
-                                    <div className="p-5 rounded-2xl bg-emerald-50 text-emerald-700 text-[11px] font-bold border border-emerald-100 flex items-center gap-3">
-                                        ✨ No notable behavioral violations detected.
-                                    </div>
-                                ) : (
-                                    <>
-                                        {alerts.filter(a => a.event_type.includes('👁️')).length > 5 && (
-                                            <div className="p-5 rounded-2xl bg-amber-50 text-amber-800 text-[11px] border border-amber-100 flex gap-4 font-bold">
-                                                <span className="shrink-0">🚩</span> <div><strong>Persistent Deviations:</strong> Candidate repeatedly shifted gaze away from assessment focal area.</div>
-                                            </div>
-                                        )}
-                                        {alerts.filter(a => a.event_type.includes('👥')).length > 0 && (
-                                            <div className="p-5 rounded-2xl bg-rose-50 text-rose-800 text-[11px] border border-rose-100 flex gap-4 font-black">
-                                                <span className="shrink-0">🚫</span> <div><strong>Unauthorized Presence:</strong> Secondary individuals detected within the surveillance zone.</div>
-                                            </div>
-                                        )}
-                                        {alerts.filter(a => a.event_type.includes('⚠️ Head')).length > 10 && (
-                                            <div className="p-5 rounded-2xl bg-amber-50 text-amber-800 text-[11px] border border-amber-100 flex gap-4 font-bold">
-                                                <span className="shrink-0">🚩</span> <div><strong>Structural Pose Flags:</strong> Detected frequent irregular head rotation.</div>
-                                            </div>
-                                        )}
-                                        {alerts.length > 0 && (
-                                            <div className="p-5 rounded-2xl bg-slate-50 text-slate-600 text-[11px] border border-slate-200 flex gap-4 font-bold">
-                                                <span className="shrink-0 text-slate-400">ℹ️</span> <div><strong>Metric Overview:</strong> Analytical summary based on {alerts.length} total signals.</div>
-                                            </div>
-                                        )}
-                                    </>
-                                )}
                             </div>
                         </div>
 

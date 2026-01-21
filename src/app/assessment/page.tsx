@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useState, useRef, Suspense } from 'react';
+import { useEffect, useState, useRef, Suspense, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { joinSession, saveAnswer, getAnswers, logProctoringEvent, flushEvents, subscribeToProctoringLogs } from '@/lib/supabase';
-import { questions, getQuestionsByLanguage, Question } from '@/lib/questions';
+import { questions } from '@/lib/questions';
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
 const Proctoring = dynamic(() => import('@/components/Proctoring'), { ssr: false });
@@ -13,7 +13,7 @@ function AssessmentContent() {
     const searchParams = useSearchParams();
     const sessionCode = searchParams.get('session');
 
-    const [sessionData, setSessionData] = useState<any>(null);
+    const [sessionData, setSessionData] = useState<{ id: string } | null>(null);
     const [isExpired, setIsExpired] = useState(false);
     const [isTerminated, setIsTerminated] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
@@ -45,19 +45,21 @@ function AssessmentContent() {
                 // Fetch saved answers
                 const savedAnswers = await getAnswers(session.id);
                 const answerMap: Record<number, string> = {};
-                savedAnswers.forEach((a: any) => { answerMap[a.question_id] = a.code; });
+                savedAnswers.forEach((a: { question_id: number; code: string }) => { answerMap[a.question_id] = a.code; });
                 setAnswers(answerMap);
 
                 // Subscribe to Proctoring Events (Hints, Warnings, Actions)
-                const { unsubscribe, channel } = subscribeToProctoringLogs(session.id, (log) => {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const { unsubscribe, channel } = subscribeToProctoringLogs(session.id, (log: any) => {
                     console.log('🔔 [Assessment] Received Realtime Log:', log);
 
                     if (log.event_type === 'HINT' || log.event_type === 'WARNING') {
                         // Clear existing timer to prevent premature closing
                         if (hintTimeoutRef.current) clearTimeout(hintTimeoutRef.current);
 
-                        const msg = log.details?.message || (log.event_type === 'HINT' ? 'New hint' : 'Warning');
-                        setLastHint({ type: log.event_type === 'HINT' ? 'hint' : 'warning', message: msg });
+                        const logEvent = log as { event_type: string; details: Record<string, unknown> };
+                        const msg = (logEvent.details?.message as string) || (logEvent.event_type === 'HINT' ? 'New hint' : 'Warning');
+                        setLastHint({ type: logEvent.event_type === 'HINT' ? 'hint' : 'warning', message: msg });
 
                         // Auto-hide after 8s
                         hintTimeoutRef.current = setTimeout(() => setLastHint(null), 8000);
@@ -73,7 +75,8 @@ function AssessmentContent() {
                 unsubscribeRef.current = unsubscribe;
 
                 // Track status
-                channel.subscribe((status: string) => {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                (channel as any).subscribe((status: string) => {
                     if (status === 'SUBSCRIBED') setRealtimeStatus('SUBSCRIBED');
                     else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') setRealtimeStatus('ERROR');
                 });
@@ -106,30 +109,7 @@ function AssessmentContent() {
         }
     }, [currentQuestionIndex, currentQuestion, answers]);
 
-    useEffect(() => {
-        const timer = setInterval(() => {
-            setTimeRemaining((prev) => {
-                if (prev <= 1) {
-                    handleSubmit();
-                    return 15 * 60;
-                }
-                return prev - 1;
-            });
-        }, 1000);
-        return () => clearInterval(timer);
-    }, [currentQuestionIndex]);
-
-    useEffect(() => {
-        const handleVisibilityChange = () => {
-            if (document.hidden && sessionData) {
-                logProctoringEvent(sessionData.id, '🚫 Tab switched', {});
-            }
-        };
-        document.addEventListener('visibilitychange', handleVisibilityChange);
-        return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-    }, [sessionData]);
-
-    const handleSubmit = async () => {
+    const handleSubmit = useCallback(async () => {
         if (sessionData && currentQuestion) {
             await saveAnswer(sessionData.id, currentQuestion.id, code);
         }
@@ -142,8 +122,30 @@ function AssessmentContent() {
             flushEvents();
             alert('Assessment complete!');
         }
-    };
+    }, [sessionData, currentQuestion, code, currentQuestionIndex, activeQuestions.length]);
 
+    useEffect(() => {
+        const timer = setInterval(() => {
+            setTimeRemaining((prev) => {
+                if (prev <= 1) {
+                    handleSubmit();
+                    return 15 * 60;
+                }
+                return prev - 1;
+            });
+        }, 1000);
+        return () => clearInterval(timer);
+    }, [currentQuestionIndex, handleSubmit]);
+
+    useEffect(() => {
+        const handleVisibilityChange = () => {
+            if (document.hidden && sessionData) {
+                logProctoringEvent(sessionData.id, '🚫 Tab switched', {});
+            }
+        };
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+    }, [sessionData]);
     const formatTime = (seconds: number) => {
         const mins = Math.floor(seconds / 60);
         const secs = seconds % 60;

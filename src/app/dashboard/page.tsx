@@ -7,9 +7,8 @@ import '../landing.css'; // Use premium landing styles
 
 export default function DashboardPage() {
     const router = useRouter();
-    const [sessions, setSessions] = useState<any[]>([]);
+    const [sessions, setSessions] = useState<{ id: string; code: string; status: string; trust_score: number; created_at: string }[]>([]);
     const [loading, setLoading] = useState(true);
-    const [user, setUser] = useState<any>(null);
 
     useEffect(() => {
         // Check auth
@@ -18,7 +17,6 @@ export default function DashboardPage() {
                 router.push('/login');
                 return;
             }
-            setUser(session.user);
             fetchSessions(session.user.id);
         });
     }, [router]);
@@ -109,7 +107,7 @@ export default function DashboardPage() {
                             📂
                         </div>
                         <h3 className="text-xl font-bold text-slate-900 mb-2">No Sessions Found</h3>
-                        <p className="text-slate-500 mb-8 max-w-sm font-medium">You haven't created any assessment sessions yet. Start by inviting a candidate.</p>
+                        <p className="text-slate-500 mb-8 max-w-sm font-medium">You haven&apos;t created any assessment sessions yet. Start by inviting a candidate.</p>
                         <button
                             onClick={() => router.push('/create')}
                             className="px-8 py-4 bg-indigo-600 text-white font-bold rounded-2xl hover:bg-indigo-700 transition active:scale-95 shadow-lg shadow-indigo-600/20"

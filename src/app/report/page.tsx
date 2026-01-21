@@ -9,9 +9,9 @@ function ReportContent() {
     const sessionCode = searchParams.get('session');
     const router = useRouter();
 
-    const [sessionData, setSessionData] = useState<any>(null);
-    const [alerts, setAlerts] = useState<any[]>([]);
-    const [answers, setAnswers] = useState<any[]>([]);
+    const [sessionData, setSessionData] = useState<{ id: string; code: string; trust_score: number; status: string; created_at: string } | null>(null);
+    const [alerts, setAlerts] = useState<{ event_type: string; created_at: string; details?: Record<string, unknown> }[]>([]);
+    const [answers, setAnswers] = useState<{ question_id: number; code: string }[]>([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -75,7 +75,7 @@ function ReportContent() {
                         <h1 className="text-4xl font-black tracking-tight text-slate-900 leading-none">Post-Session Analysis</h1>
                         <p className="text-slate-500 mt-3 font-medium text-sm">
                             Session Code: <span className="text-indigo-600 font-mono font-bold">{sessionCode}</span> •
-                            Completed {new Date(sessionData?.created_at).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
+                            Completed {new Date(sessionData?.created_at || '').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
                         </p>
                     </div>
                     <div className="flex gap-3 no-print">
@@ -152,7 +152,7 @@ function ReportContent() {
                             <tbody className="text-sm font-medium">
                                 {alerts.map((a, i) => (
                                     <tr key={i} className="group hover:bg-slate-50 transition-colors">
-                                        <td className="px-6 py-4 text-slate-400 font-mono text-xs">{new Date(a.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</td>
+                                        <td className="px-6 py-4 text-slate-400 font-mono text-xs">{new Date(a.created_at || '').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</td>
                                         <td className="px-6 py-4 text-slate-700 font-bold">{a.event_type}</td>
                                         <td className="px-6 py-4 text-slate-400">
                                             <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider ${a.event_type.includes('Warning') || a.event_type.includes('⚠️') ? 'bg-amber-50 text-amber-600 border border-amber-100' :

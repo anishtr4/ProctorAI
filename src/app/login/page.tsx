@@ -35,8 +35,8 @@ export default function LoginPage() {
                 // For dev/hackathon often confirm is off or we just let them try login
                 router.push('/');
             }
-        } catch (err: any) {
-            setError(err.message);
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : 'An error occurred during authentication');
         } finally {
             setLoading(false);
         }

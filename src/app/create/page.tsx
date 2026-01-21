@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { createSession, supabase } from '@/lib/supabase';
-import { questions, getQuestionsByLanguage } from '@/lib/questions';
+import { User } from '@supabase/supabase-js';
 
 type AssessmentConfig = {
     language: 'javascript' | 'python' | 'java' | 'all';
@@ -16,7 +16,7 @@ export default function CreateAssessmentPage() {
     const [showSuccess, setShowSuccess] = useState(false);
     const [sessionUrl, setSessionUrl] = useState('');
     const [isLoading, setIsLoading] = useState(false);
-    const [user, setUser] = useState<any>(null);
+    const [user, setUser] = useState<User | null>(null);
     const [authChecked, setAuthChecked] = useState(false);
 
     const [config, setConfig] = useState<AssessmentConfig>({
@@ -156,7 +156,7 @@ export default function CreateAssessmentPage() {
                         ].map((lang) => (
                             <button
                                 key={lang.value}
-                                onClick={() => setConfig({ ...config, language: lang.value as any })}
+                                onClick={() => setConfig({ ...config, language: lang.value as AssessmentConfig['language'] })}
                                 className={`p-6 rounded-[2rem] border-2 font-black text-xs uppercase tracking-widest transition-all ${config.language === lang.value
                                     ? 'border-indigo-600 bg-indigo-50/50 text-indigo-600 shadow-lg shadow-indigo-500/10 scale-[1.02]'
                                     : 'border-slate-100 hover:border-indigo-200 text-slate-500 hover:bg-slate-50'
